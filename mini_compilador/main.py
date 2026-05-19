@@ -1,4 +1,9 @@
 import sys
+import io
+
+if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf8"):
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+
 from .lexer import Lexer
 from .parser import Parser
 from .semantic import AnalisadorSemantico
