@@ -1,0 +1,7 @@
+# ambiente de desenvolvimento
+.claude/
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
