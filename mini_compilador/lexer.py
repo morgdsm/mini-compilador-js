@@ -1,213 +1,168 @@
+import re
+import bisect
 from .tokens import Token, TipoToken, PALAVRAS_CHAVE
 from .errors import ErroLexico
+
+
+_TOKEN_RE = re.compile(r'''
+    (?P<COM_BLOCO>      /\*[\s\S]*?\*/                                )
+  | (?P<COM_BLOCO_A>    /\*[\s\S]*                                    )
+  | (?P<COM_LINHA>      //[^\n]*                                      )
+  | (?P<DECIMAL>        \d+\.\d+                                      )
+  | (?P<INTEIRO>        \d+                                           )
+  | (?P<STRING>         "(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'      )
+  | (?P<STR_ABERTA>     ["'][^\n]*                                    )
+  | (?P<IDENT>          [A-Za-z_]\w*                                  )
+  | (?P<IGUAL_IGUAL>    ==                                            )
+  | (?P<DIFERENTE>      !=                                            )
+  | (?P<E_LOGICO>       &&                                            )
+  | (?P<OU_LOGICO>      \|\|                                          )
+  | (?P<MAIS>           \+                                            )
+  | (?P<MENOS>          -                                             )
+  | (?P<ASTERISCO>      \*                                            )
+  | (?P<BARRA>          /                                             )
+  | (?P<IGUAL>          =                                             )
+  | (?P<MAIOR>          >                                             )
+  | (?P<MENOR>          <                                             )
+  | (?P<NAO>            !                                             )
+  | (?P<ABRE_PAREN>     \(                                            )
+  | (?P<FECHA_PAREN>    \)                                            )
+  | (?P<ABRE_CHAVE>     \{                                            )
+  | (?P<FECHA_CHAVE>    \}                                            )
+  | (?P<VIRGULA>        ,                                             )
+  | (?P<PONTO_VIRGULA>  ;                                             )
+  | (?P<NEWLINE>        \n                                            )
+  | (?P<ESPACOS>        [ \t\r]+                                      )
+  | (?P<ERRO>           .                                             )
+''', re.VERBOSE)
+
+# Tipos de token após os quais uma quebra de linha insere FIM_INSTRUCAO (ASI)
+_PERMITE_ASI = frozenset({
+    TipoToken.IDENTIFICADOR,
+    TipoToken.INTEIRO,
+    TipoToken.DECIMAL,
+    TipoToken.STRING,
+    TipoToken.TRUE,
+    TipoToken.FALSE,
+    TipoToken.FECHA_PAREN,
+    TipoToken.FECHA_CHAVE,
+    TipoToken.RETURN,
+})
+
+# Mapeamento direto: nome do grupo regex → TipoToken
+_MAPA_TIPO = {
+    "IGUAL_IGUAL":   TipoToken.IGUAL_IGUAL,
+    "DIFERENTE":     TipoToken.DIFERENTE,
+    "E_LOGICO":      TipoToken.E_LOGICO,
+    "OU_LOGICO":     TipoToken.OU_LOGICO,
+    "MAIS":          TipoToken.MAIS,
+    "MENOS":         TipoToken.MENOS,
+    "ASTERISCO":     TipoToken.ASTERISCO,
+    "BARRA":         TipoToken.BARRA,
+    "IGUAL":         TipoToken.IGUAL,
+    "MAIOR":         TipoToken.MAIOR,
+    "MENOR":         TipoToken.MENOR,
+    "NAO":           TipoToken.NAO,
+    "ABRE_PAREN":    TipoToken.ABRE_PAREN,
+    "FECHA_PAREN":   TipoToken.FECHA_PAREN,
+    "ABRE_CHAVE":    TipoToken.ABRE_CHAVE,
+    "FECHA_CHAVE":   TipoToken.FECHA_CHAVE,
+    "VIRGULA":       TipoToken.VIRGULA,
+    "PONTO_VIRGULA": TipoToken.FIM_INSTRUCAO,
+}
+
+
+def _decode_string(raw):
+    """Traduz sequências de escape no conteúdo de uma string (sem as aspas)."""
+    out = []
+    i = 0
+    while i < len(raw):
+        if raw[i] == "\\" and i + 1 < len(raw) and raw[i + 1] in ('"', "'", "\\", "n", "t"):
+            out.append({"n": "\n", "t": "\t"}.get(raw[i + 1], raw[i + 1]))
+            i += 2
+        else:
+            out.append(raw[i])
+            i += 1
+    return "".join(out)
 
 
 class Lexer:
     def __init__(self, codigo):
         self.codigo = codigo
-        self.pos = 0
-        self.linha = 1
-        self.coluna = 1
+        self._line_starts = self._calc_line_starts(codigo)
         self.tokens = []
 
-    def _atual(self):
-        if self.pos < len(self.codigo):
-            return self.codigo[self.pos]
-        return None
+    @staticmethod
+    def _calc_line_starts(codigo):
+        """Retorna lista com o offset de início de cada linha (índice 0 = linha 1)."""
+        starts = [0]
+        for i, ch in enumerate(codigo):
+            if ch == "\n":
+                starts.append(i + 1)
+        return starts
 
-    def _proximo(self):
-        if self.pos + 1 < len(self.codigo):
-            return self.codigo[self.pos + 1]
-        return None
+    def _lc(self, pos):
+        """Converte offset de byte em (linha, coluna) base-1."""
+        linha = bisect.bisect_right(self._line_starts, pos)
+        coluna = pos - self._line_starts[linha - 1] + 1
+        return linha, coluna
 
-    def _avancar(self):
-        ch = self.codigo[self.pos]
-        self.pos += 1
-        if ch == "\n":
-            self.linha += 1
-            self.coluna = 1
-        else:
-            self.coluna += 1
-        return ch
-
-    def _pular_espacos(self):
-        while self._atual() in (" ", "\t", "\r"):
-            self._avancar()
-
-    def _ler_numero(self):
-        linha, coluna = self.linha, self.coluna
-        num = ""
-        is_decimal = False
-        while self._atual() and (self._atual().isdigit() or self._atual() == "."):
-            if self._atual() == ".":
-                if is_decimal:
-                    raise ErroLexico("número com mais de um ponto decimal", linha, coluna)
-                is_decimal = True
-            num += self._avancar()
-        tipo = TipoToken.DECIMAL if is_decimal else TipoToken.INTEIRO
-        return Token(tipo, num, linha, coluna)
-
-    def _ler_string(self):
-        linha, coluna = self.linha, self.coluna
-        delimitador = self._avancar()
-        texto = ""
-        while self._atual() and self._atual() != delimitador:
-            if self._atual() == "\n":
-                raise ErroLexico("string não fechada antes do fim da linha", linha, coluna)
-            if self._atual() == "\\" and self._proximo() in ('"', "'", "\\", "n", "t"):
-                self._avancar()
-                esc = self._avancar()
-                texto += {"n": "\n", "t": "\t"}.get(esc, esc)
-            else:
-                texto += self._avancar()
-        if self._atual() is None:
-            raise ErroLexico("string não fechada antes do fim do arquivo", linha, coluna)
-        self._avancar()
-        return Token(TipoToken.STRING, texto, linha, coluna)
-
-    def _ler_identificador(self):
-        linha, coluna = self.linha, self.coluna
-        nome = ""
-        while self._atual() and (self._atual().isalnum() or self._atual() == "_"):
-            nome += self._avancar()
-        tipo = PALAVRAS_CHAVE.get(nome, TipoToken.IDENTIFICADOR)
-        return Token(tipo, nome, linha, coluna)
-
-    def _ultimo_token_permite_fim_instrucao(self):
-        if not self.tokens:
-            return False
-        ultimo = self.tokens[-1].tipo
-        return ultimo in (
-            TipoToken.IDENTIFICADOR,
-            TipoToken.INTEIRO,
-            TipoToken.DECIMAL,
-            TipoToken.STRING,
-            TipoToken.TRUE,
-            TipoToken.FALSE,
-            TipoToken.FECHA_PAREN,
-            TipoToken.FECHA_CHAVE,
-            TipoToken.RETURN,
-        )
+    def _ultimo_permite_asi(self):
+        return bool(self.tokens) and self.tokens[-1].tipo in _PERMITE_ASI
 
     def tokenizar(self):
-        while self.pos < len(self.codigo):
-            ch = self._atual()
+        codigo = self.codigo
 
-            if ch in (" ", "\t", "\r"):
-                self._pular_espacos()
+        for m in _TOKEN_RE.finditer(codigo):
+            grupo = m.lastgroup
+            texto = m.group()
+            linha, coluna = self._lc(m.start())
+
+            # ── ignorados ────────────────────────────────────────────────────
+            if grupo in ("COM_LINHA", "COM_BLOCO", "ESPACOS"):
                 continue
 
-            if ch == "\n":
-                linha, coluna = self.linha, self.coluna
-                self._avancar()
-                if self._ultimo_token_permite_fim_instrucao():
+            # ── erros léxicos ────────────────────────────────────────────────
+            if grupo == "COM_BLOCO_A":
+                raise ErroLexico("comentário de bloco não fechado", linha, coluna)
+
+            if grupo == "STR_ABERTA":
+                fim = m.end()
+                if fim >= len(codigo) or codigo[fim] != "\n":
+                    raise ErroLexico("string não fechada antes do fim do arquivo", linha, coluna)
+                raise ErroLexico("string não fechada antes do fim da linha", linha, coluna)
+
+            if grupo == "ERRO":
+                raise ErroLexico(f"caractere inesperado: {texto!r}", linha, coluna)
+
+            # ── quebra de linha → ASI ────────────────────────────────────────
+            if grupo == "NEWLINE":
+                if self._ultimo_permite_asi():
                     self.tokens.append(Token(TipoToken.FIM_INSTRUCAO, "\\n", linha, coluna))
                 continue
 
-            if ch == "/" and self._proximo() == "/":
-                while self._atual() and self._atual() != "\n":
-                    self._avancar()
+            # ── literais ─────────────────────────────────────────────────────
+            if grupo == "INTEIRO":
+                self.tokens.append(Token(TipoToken.INTEIRO, texto, linha, coluna))
                 continue
 
-            if ch == "/" and self._proximo() == "*":
-                linha, coluna = self.linha, self.coluna
-                self._avancar()
-                self._avancar()
-                while self._atual():
-                    if self._atual() == "*" and self._proximo() == "/":
-                        self._avancar()
-                        self._avancar()
-                        break
-                    self._avancar()
-                else:
-                    raise ErroLexico("comentário de bloco não fechado", linha, coluna)
+            if grupo == "DECIMAL":
+                self.tokens.append(Token(TipoToken.DECIMAL, texto, linha, coluna))
                 continue
 
-            if ch.isdigit():
-                self.tokens.append(self._ler_numero())
+            if grupo == "STRING":
+                valor = _decode_string(texto[1:-1])
+                self.tokens.append(Token(TipoToken.STRING, valor, linha, coluna))
                 continue
 
-            if ch in ('"', "'"):
-                self.tokens.append(self._ler_string())
+            # ── identificador ou palavra-chave ───────────────────────────────
+            if grupo == "IDENT":
+                tipo = PALAVRAS_CHAVE.get(texto, TipoToken.IDENTIFICADOR)
+                self.tokens.append(Token(tipo, texto, linha, coluna))
                 continue
 
-            if ch.isalpha() or ch == "_":
-                self.tokens.append(self._ler_identificador())
-                continue
+            # ── operadores e delimitadores ───────────────────────────────────
+            self.tokens.append(Token(_MAPA_TIPO[grupo], texto, linha, coluna))
 
-            linha, coluna = self.linha, self.coluna
-
-            if ch == ";":
-                self._avancar()
-                self.tokens.append(Token(TipoToken.FIM_INSTRUCAO, ";", linha, coluna))
-                continue
-
-            simples = {
-                "+": TipoToken.MAIS,
-                "-": TipoToken.MENOS,
-                "*": TipoToken.ASTERISCO,
-                "(": TipoToken.ABRE_PAREN,
-                ")": TipoToken.FECHA_PAREN,
-                "{": TipoToken.ABRE_CHAVE,
-                "}": TipoToken.FECHA_CHAVE,
-                ",": TipoToken.VIRGULA,
-            }
-
-            if ch in simples:
-                self.tokens.append(Token(simples[ch], ch, linha, coluna))
-                self._avancar()
-                continue
-
-            if ch == "/" :
-                self.tokens.append(Token(TipoToken.BARRA, ch, linha, coluna))
-                self._avancar()
-                continue
-
-            if ch == "=" and self._proximo() == "=":
-                self._avancar()
-                self._avancar()
-                self.tokens.append(Token(TipoToken.IGUAL_IGUAL, "==", linha, coluna))
-                continue
-
-            if ch == "!" and self._proximo() == "=":
-                self._avancar()
-                self._avancar()
-                self.tokens.append(Token(TipoToken.DIFERENTE, "!=", linha, coluna))
-                continue
-
-            if ch == "=":
-                self._avancar()
-                self.tokens.append(Token(TipoToken.IGUAL, "=", linha, coluna))
-                continue
-
-            if ch == ">" :
-                self._avancar()
-                self.tokens.append(Token(TipoToken.MAIOR, ">", linha, coluna))
-                continue
-
-            if ch == "<":
-                self._avancar()
-                self.tokens.append(Token(TipoToken.MENOR, "<", linha, coluna))
-                continue
-
-            if ch == "&" and self._proximo() == "&":
-                self._avancar()
-                self._avancar()
-                self.tokens.append(Token(TipoToken.E_LOGICO, "&&", linha, coluna))
-                continue
-
-            if ch == "|" and self._proximo() == "|":
-                self._avancar()
-                self._avancar()
-                self.tokens.append(Token(TipoToken.OU_LOGICO, "||", linha, coluna))
-                continue
-
-            if ch == "!":
-                self._avancar()
-                self.tokens.append(Token(TipoToken.NAO, "!", linha, coluna))
-                continue
-
-            raise ErroLexico(f"caractere inesperado: {ch!r}", linha, coluna)
-
-        self.tokens.append(Token(TipoToken.EOF, "", self.linha, self.coluna))
+        self.tokens.append(Token(TipoToken.EOF, "", *self._lc(len(codigo))))
         return self.tokens

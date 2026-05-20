@@ -96,13 +96,17 @@ O compilador emite automaticamente o token `FIM_INSTRUCAO` ao encontrar `;` ou u
 
 ### Fase 1 — Analisador Léxico (`lexer.py`)
 
-Converte o código-fonte em uma sequência de tokens. Percorre o texto caractere a caractere e reconhece:
+Converte o código-fonte em uma sequência de tokens. **Esta versão utiliza expressões regulares (módulo `re` do Python)**: um único padrão mestre compilado (`_TOKEN_RE`) com grupos nomeados escaneia o código inteiro via `re.finditer`, sem percorrer caractere a caractere manualmente.
+
+Reconhece:
 
 - Palavras-chave (`let`, `const`, `if`, `while`, `function`, `return`, ...)
 - Identificadores e literais (inteiros, decimais, strings)
 - Operadores simples e compostos (`==`, `!=`, `&&`, `||`)
 - Comentários de linha (`//`) e de bloco (`/* */`)
-- `FIM_INSTRUCAO` por `;` ou quebra de linha válida
+- `FIM_INSTRUCAO` por `;` ou quebra de linha válida (ASI)
+
+A conversão de offset de byte em linha/coluna é feita com `bisect` sobre um índice pré-calculado dos inícios de linha, tornando o cálculo O(log n) em vez de linear.
 
 Erros léxicos são lançados como `ErroLexico` com linha e coluna.
 
