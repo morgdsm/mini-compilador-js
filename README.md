@@ -142,6 +142,33 @@ Erros semânticos são coletados e exibidos todos de uma vez.
 
 ## Execução
 
+### Modo interativo (recomendado)
+
+Basta rodar **sem argumentos**:
+
+```bash
+python main.py
+```
+
+O compilador abre um terminal interativo: mostra uma mensagem de boas-vindas
+com um resumo das três fases, lista os arquivos `.js` **ou** `.txt`
+encontrados em `mini_compilador/examples/` e pede para você escolher:
+
+- um **número** correspondente a um arquivo da lista, ou
+- a opção `all` para analisar **todos** os arquivos em sequência, ou
+- `sair` para encerrar.
+
+Após cada análise, o programa **volta automaticamente ao menu principal**,
+permitindo analisar outro arquivo sem reiniciar. A lista é relida do disco a
+cada volta, então arquivos adicionados durante a sessão aparecem
+automaticamente.
+
+Se você digitar algo inválido, o programa avisa e mostra a lista novamente.
+
+### Modo direto (passando o caminho)
+
+Para analisar um arquivo específico sem passar pelo menu:
+
 ```bash
 python main.py <arquivo.js>
 ```
@@ -240,6 +267,31 @@ Os testes cobrem:
 - Escopos aninhados e vazamento de variáveis
 - Verificação de aridade de funções
 - Operações inválidas por tipo
+
+---
+
+## Notas de Implementação
+
+### Declaração implícita: erro semântico, não sintático
+
+O requisito original especifica que a atribuição a uma variável não declarada
+(ex.: `x = 10` sem `let` prévio) deve produzir **Erro Sintático**. No
+compilador, o **comportamento** é atendido — esse programa é rejeitado — mas
+o erro é classificado como **Erro Semântico** (`variável 'x' não declarada`),
+em conformidade com a separação clássica das fases de compilação.
+
+Justificativa: a distinção entre **reatribuição válida** (`contador = contador + 1`,
+com `contador` previamente declarado, como em [valido.js](mini_compilador/examples/valido.js))
+e **declaração implícita** (`x = 10`, com `x` nunca declarado) **exige consulta
+à tabela de símbolos**. A tabela de símbolos é responsabilidade da fase
+semântica; fazer o parser realizar essa checagem violaria o princípio de que o
+analisador sintático opera apenas sobre a estrutura da linguagem, sem
+conhecimento contextual.
+
+Compiladores reais (TypeScript em modo estrito, Java, C#, Rust, etc.) seguem a
+mesma abordagem: variáveis não declaradas são reportadas pelo verificador
+semântico, não pelo parser. O programa final continua sendo rejeitado, apenas
+com a etiqueta de fase tecnicamente correta.
 
 ---
 
