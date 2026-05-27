@@ -22,6 +22,8 @@ mini_compilador/
 ├── semantic.py      # Analisador semântico
 ├── tokens.py        # Definição de tokens e palavras-chave
 ├── errors.py        # Classes de erro por fase
+├── docs/
+│   └── MODELAGEM.md # Fase 1: tabela de tokens e GLC
 ├── examples/
 │   ├── valido.js        # Programa correto
 │   ├── erro_lexico.js   # Erro na fase léxica
@@ -46,6 +48,7 @@ main.py              # Ponto de entrada
 | `let x = 10` | Sim |
 | `const PI = 3.14` | Sim |
 | `var x = 1` | **Erro sintático** |
+| `x = 10` (sem `let`/`const`) | **Erro sintático** (declaração implícita) |
 | `let x` | **Erro sintático** (sem valor inicial) |
 
 ### Tipos suportados
@@ -92,6 +95,14 @@ O compilador emite automaticamente o token `FIM_INSTRUCAO` ao encontrar `;` ou u
 
 ---
 
+## Modelagem Formal (Fase 1)
+
+A documentação completa da linguagem — **tabela de tokens com regex** e **GLC não ambígua** — está em:
+
+[`mini_compilador/docs/MODELAGEM.md`](mini_compilador/docs/MODELAGEM.md)
+
+---
+
 ## Arquitetura
 
 ### Fase 1 — Analisador Léxico (`lexer.py`)
@@ -121,7 +132,9 @@ Implementa um **parser recursivo descendente** que valida a gramática da Mini-J
 - Expressões com precedência correta (lógico → relacional → aditivo → multiplicativo → unário → primário)
 - Chamadas de função
 
-Rejeita `var` com mensagem clara. Erros sintáticos são lançados como `ErroSintatico`.
+Rejeita `var` e declarações implícitas (`x = 10` sem `let`/`const`) com mensagem clara.  
+Acumula **múltiplos erros sintáticos** e tenta recuperação via pontos de sincronização (`;`, `}`, palavras-chave de declaração).  
+Mensagens no formato: `Erro Sintático (Linha X, Col Y): Esperado '}', encontrado ')'`.
 
 ### Fase 3 — Analisador Semântico (`semantic.py`)
 
@@ -213,7 +226,7 @@ python main.py mini_compilador/examples/erro_lexico.js
 
 ```
 FASE 1 — ANÁLISE LÉXICA
-[ERRO] [Léxico] Linha 4, Col 11: caractere inesperado: '@'
+[ERRO] Erro Léxico (Linha 4, Col 11): caractere inesperado: '@'
 
 RESULTADO FINAL
 Programa REJEITADO.
@@ -227,7 +240,7 @@ python main.py mini_compilador/examples/erro_sintatico.js
 
 ```
 FASE 2 — ANÁLISE SINTÁTICA
-[ERRO] [Sintático] Linha 3, Col 1: 'var' não é permitido; use 'let' ou 'const'
+[ERRO] Erro Sintático (Linha 3, Col 1): 'var' não é permitido; use 'let' ou 'const'
 
 RESULTADO FINAL
 Programa REJEITADO.
@@ -241,11 +254,11 @@ python main.py mini_compilador/examples/erro_semantico.js
 
 ```
 FASE 3 — ANÁLISE SEMÂNTICA
-[ERRO] [Semântico] Linha 4, Col 5: variável 'x' já declarada neste escopo
-[ERRO] [Semântico] Linha 7, Col 1: não é possível reatribuir constante 'PI'
-[ERRO] [Semântico] Linha 9, Col 19: operação '-' inválida com strings
-[ERRO] [Semântico] Linha 15, Col 1: função 'soma' espera 2 argumento(s), recebeu 3
-[ERRO] [Semântico] Linha 17, Col 13: variável 'z' não declarada
+[ERRO] Erro Semântico (Linha 4, Col 5): variável 'x' já declarada neste escopo
+[ERRO] Erro Semântico (Linha 7, Col 1): não é possível reatribuir constante 'PI'
+[ERRO] Erro Semântico (Linha 9, Col 19): operação '-' inválida com strings
+[ERRO] Erro Semântico (Linha 15, Col 1): função 'soma' espera 2 argumento(s), recebeu 3
+[ERRO] Erro Semântico (Linha 17, Col 13): variável 'z' não declarada
 
 RESULTADO FINAL
 Programa REJEITADO.
@@ -262,7 +275,8 @@ python -m unittest discover mini_compilador/tests/ -v
 Os testes cobrem:
 - Reconhecimento correto de todos os tipos de token
 - Inserção automática de `FIM_INSTRUCAO`
-- Rejeição de `var` e declarações sem valor
+- Rejeição de `var`, declaração implícita e declarações sem valor
+- Recuperação de erros sintáticos (múltiplos diagnósticos)
 - Funções, blocos, `if/else`, `while`
 - Escopos aninhados e vazamento de variáveis
 - Verificação de aridade de funções
@@ -270,28 +284,15 @@ Os testes cobrem:
 
 ---
 
-## Notas de Implementação
+## Nota pedagógica
 
-### Declaração implícita: erro semântico, não sintático
+### Declaração implícita: sintático ou semântico?
 
-O requisito original especifica que a atribuição a uma variável não declarada
-(ex.: `x = 10` sem `let` prévio) deve produzir **Erro Sintático**. No
-compilador, o **comportamento** é atendido — esse programa é rejeitado — mas
-o erro é classificado como **Erro Semântico** (`variável 'x' não declarada`),
-em conformidade com a separação clássica das fases de compilação.
+O enunciado do projeto exige que `x = 10` sem `let` ou `const` prévio produza **Erro Sintático**. O compilador atende a essa regra: o parser mantém um rastro mínimo de declarações por escopo e rejeita atribuições a identificadores ainda não declarados, enquanto permite reatribuições válidas como `contador = contador + 1` após `let contador = 0` (como em [valido.js](mini_compilador/examples/valido.js)).
 
-Justificativa: a distinção entre **reatribuição válida** (`contador = contador + 1`,
-com `contador` previamente declarado, como em [valido.js](mini_compilador/examples/valido.js))
-e **declaração implícita** (`x = 10`, com `x` nunca declarado) **exige consulta
-à tabela de símbolos**. A tabela de símbolos é responsabilidade da fase
-semântica; fazer o parser realizar essa checagem violaria o princípio de que o
-analisador sintático opera apenas sobre a estrutura da linguagem, sem
-conhecimento contextual.
+Do ponto de vista **clássico** da teoria de compiladores, essa distinção costuma ser tratada na **análise semântica**: saber se um identificador já foi declarado exige consulta à tabela de símbolos, que é responsabilidade dessa fase — o parser, operando sobre uma GLC, validaria apenas a *forma* das frases (`IDENT = Expr`), sem conhecimento de contexto. Compiladores reais (TypeScript em modo estrito, Java, C#, Rust, etc.) frequentemente reportam variáveis não declaradas no verificador semântico, não no sintático.
 
-Compiladores reais (TypeScript em modo estrito, Java, C#, Rust, etc.) seguem a
-mesma abordagem: variáveis não declaradas são reportadas pelo verificador
-semântico, não pelo parser. O programa final continua sendo rejeitado, apenas
-com a etiqueta de fase tecnicamente correta.
+**Resumo:** a implementação atual prioriza o **critério do enunciado** (erro sintático); a visão semântica permanece válida como referência teórica e explica por que o parser precisa de um controle de escopo mínimo para distinguir declaração implícita de reatribuição legítima.
 
 ---
 

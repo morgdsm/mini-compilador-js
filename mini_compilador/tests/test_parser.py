@@ -11,12 +11,14 @@ from mini_compilador.errors import ErroSintatico
 
 def analisar(codigo):
     tokens = Lexer(codigo).tokenizar()
-    Parser(tokens).analisar()
+    erros = Parser(tokens).analisar()
+    if erros:
+        raise erros[0]
 
 
-def deve_falhar(codigo):
-    with unittest.TestCase().assertRaises(ErroSintatico):
-        analisar(codigo)
+def erros_sintaticos(codigo):
+    tokens = Lexer(codigo).tokenizar()
+    return Parser(tokens).analisar()
 
 
 class TestDeclaracoes(unittest.TestCase):
@@ -32,6 +34,14 @@ class TestDeclaracoes(unittest.TestCase):
     def test_var_proibido(self):
         with self.assertRaises(ErroSintatico):
             analisar("var x = 1")
+
+    def test_declaracao_implicita(self):
+        with self.assertRaises(ErroSintatico) as ctx:
+            analisar("x = 10")
+        self.assertIn("implícita", str(ctx.exception))
+
+    def test_reatribuicao_valida(self):
+        analisar("let x = 1\nx = 2")
 
     def test_declaracao_sem_valor(self):
         with self.assertRaises(ErroSintatico):
@@ -69,7 +79,7 @@ class TestControle(unittest.TestCase):
         analisar("if (x > 0) { let y = 1 } else { let y = 0 }")
 
     def test_while(self):
-        analisar("while (i < 10) { i = i + 1 }")
+        analisar("let i = 0\nwhile (i < 10) { i = i + 1 }")
 
     def test_if_sem_parentes(self):
         with self.assertRaises(ErroSintatico):
@@ -110,6 +120,21 @@ class TestPontoVirgula(unittest.TestCase):
 
     def test_misto(self):
         analisar("let x = 1;\nlet y = 2")
+
+
+class TestRecuperacaoErros(unittest.TestCase):
+    def test_multiplos_erros_sintaticos(self):
+        codigo = """
+var a = 1
+x = 10
+let y
+"""
+        erros = erros_sintaticos(codigo)
+        self.assertGreaterEqual(len(erros), 2)
+
+    def test_mensagem_esperado_encontrado(self):
+        erros = erros_sintaticos("function f() { let x = (1 + 2 }")
+        self.assertTrue(any("Esperado" in str(e) and "encontrado" in str(e) for e in erros))
 
 
 if __name__ == "__main__":
