@@ -1,5 +1,6 @@
 from enum import Enum, auto
 
+# Definição de Tokens = Palavras
 
 class TipoToken(Enum):
     # Literais

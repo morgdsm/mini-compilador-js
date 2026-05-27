@@ -7,7 +7,7 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf8"):
 from .lexer import Lexer
 from .parser import Parser
 from .semantic import AnalisadorSemantico
-from .errors import ErroLexico, ErroSintatico, ErroSemantico
+from .errors import ErroLexico, ErroSemantico
 
 
 def _cabecalho(fase):
@@ -45,14 +45,16 @@ def compilar(caminho):
     # ── FASE 2: sintático ───────────────────────────────────────────────────────
     _cabecalho("FASE 2 — ANÁLISE SINTÁTICA")
 
-    try:
-        parser = Parser(tokens)
-        parser.analisar()
-        print("\n[OK]\nSintaxe válida.")
-    except ErroSintatico as e:
-        print(f"\n[ERRO] {e}")
+    parser = Parser(tokens)
+    erros_sintaticos = parser.analisar()
+
+    if erros_sintaticos:
+        for e in erros_sintaticos:
+            print(f"\n[ERRO] {e}")
         print("\nRESULTADO FINAL\nPrograma REJEITADO.")
         sys.exit(1)
+
+    print("\n[OK]\nSintaxe válida.")
 
     # ── FASE 3: semântico ───────────────────────────────────────────────────────
     _cabecalho("FASE 3 — ANÁLISE SEMÂNTICA")

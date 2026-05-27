@@ -11,7 +11,8 @@ from mini_compilador.semantic import AnalisadorSemantico
 
 def erros_semanticos(codigo):
     tokens = Lexer(codigo).tokenizar()
-    Parser(tokens).analisar()
+    if Parser(tokens).analisar():
+        return []
     tokens2 = Lexer(codigo).tokenizar()
     return AnalisadorSemantico(tokens2).analisar()
 
